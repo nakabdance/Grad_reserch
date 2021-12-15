@@ -8,10 +8,11 @@ typedef struct
 	int location_y;
 	int sight[3][3];		//周囲８近傍の視野
 	int direction[3][3];	//方向情報
-	unsigned long Q_number;
-	int action_dc;
+	int agent_action_select;
+	long Q_number;
 } Agent;
 
+#define Wall_math -1 //見えない壁判定のあるマス
 #define N_Moved_math 0 //移動不可能ます
 #define Y_Moved_math 1 //移動可能ます
 #define T_info_math 2 //上情報
@@ -20,28 +21,33 @@ typedef struct
 #define R_info_math 5 //右情報
 #define agent_location 6 //エージェントのいる場所
 #define Map_size 10 //マップの大きさ
+#define NUM_LEARN 20 //学習の回数
 
-int map[11][11];
-int Smap[11][11]; //11*11の視覚用マップ配列
-int Vmap[11][11]= //11*11の方向情報用マップ配列,配列宣言時でしかリストの挿入ができないためここで作る
+int map[13][13];
+int Smap[13][13]; //11*11の視覚用マップ配列
+int Vmap[13][13]= //11*11の方向情報用マップ配列,配列宣言時でしかリストの挿入ができないためここで作る
 	{
-		{0,0,0,0,0,0,0,0,0,0,0},
-		{0,4,4,4,4,0,4,4,4,4,0},
-		{0,5,5,5,5,3,3,3,3,3,0},
-		{0,2,0,5,4,4,4,3,0,2,0},
-		{0,0,0,0,4,3,3,0,0,0,0},
-		{0,0,0,0,4,0,4,0,0,0,0},
-		{0,0,0,0,4,3,4,0,0,0,0},
-		{0,4,4,4,4,4,4,4,4,4,0},
-		{0,4,3,3,3,3,3,3,3,3,0},
-		{0,0,0,2,2,2,2,2,0,2,0},
-		{0,0,0,0,0,0,0,0,0,0,0}
+		{-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
+		{-1,0,0,0,0,0,0,0,0,0,0,0,-1},
+		{-1,0,4,4,4,4,0,4,4,4,4,0,-1},
+		{-1,0,5,5,5,5,3,3,3,3,3,0,-1},
+		{-1,0,2,0,5,4,4,4,3,0,2,0,-1},
+		{-1,0,0,0,0,4,3,3,0,0,0,0,-1},
+		{-1,0,0,0,0,4,0,4,0,0,0,0,-1},
+		{-1,0,0,0,0,4,3,4,0,0,0,0,-1},
+		{-1,0,4,4,4,4,4,4,4,4,4,0,-1},
+		{-1,0,4,3,3,3,3,3,3,3,3,0,-1},
+		{-1,0,0,0,2,2,2,2,2,0,2,0,-1},
+		{-1,0,0,0,0,0,0,0,0,0,0,0,-1},
+		{-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1}
 	}; 
 
-void showmap(int map[11][11]); //マップを可視化する関数
-void make_Smap(int Smap[11][11]);
+void showmap(int map[13][13], Agent *a); //マップを可視化する関数
+void make_Smap(int Smap[13][13]);
 void agent_sight(Agent *a);
 void agent_direction(Agent *a);
+void agent_action_dc(Agent *a);		//エージェントの行動決定を司る関数
+void agent_action_select(Agent *a, int Smap[13][13]);		//エージェントの行動選択を司る関数
 
 int main(int argc, char *argv[])
  {
@@ -50,29 +56,38 @@ int main(int argc, char *argv[])
 	a.location_y = 9;
 	unsigned long int Mtseed;
 	Mtseed = strtoul(argv[1], NULL, 10);
+	int ilearn;
+
 	init_genrand(Mtseed);
 
 	make_Smap(Smap);
-	showmap(Smap);
+	showmap(Smap, &a);
 
 	printf("\n\n");
 
-	showmap(Vmap);
+	for(ilearn=0; ilearn<NUM_LEARN; ilearn++)
+	{
+		make_Smap(Smap);
+		printf("%d回目の行動", (ilearn + 1));
+		agent_sight(&a);
+		agent_direction(&a);
+		printf("\n");
+		agent_action_select(&a, Smap);
+		agent_action_dc(&a);
+		showmap(Smap, &a);
 
-agent_sight(&a);
-
-agent_direction(&a);
-
+	}
 	return(0);
 }
 
-void showmap(int map[11][11])//map表示用関数
+void showmap(int map[13][13], Agent *a)//map表示用関数、map[0][0]...には見えない壁があるので1から12までを表示する
 { 
 	int mapi = 0;
 	int mapn = 0;
-	for( mapi = 0; mapi < 11; mapi++ )
+	map[(*a).location_x][(*a).location_y] = agent_location;
+	for( mapi = 1; mapi < 12; mapi++ )
 	{
-		for( mapn = 0; mapn < 11; mapn++ )
+		for( mapn = 1; mapn < 12; mapn++ )
 		{
 			printf("%d.", map[mapi][mapn]);
 		}
@@ -80,7 +95,7 @@ void showmap(int map[11][11])//map表示用関数
 	}
 }
 
-void make_Smap(int Smap[11][11])
+void make_Smap(int Smap[13][13])
 {
 	int i, j; //map配列初期化
 	for( i = 0; i < 11; i++)//map配列の初期化
@@ -91,12 +106,21 @@ void make_Smap(int Smap[11][11])
 		}
 	}
 
-	for (i = 0; i < Map_size+1; i++)
+	for (i = 0; i < 13; i++)
 	{
-		Smap[0][i] = N_Moved_math;
-		Smap[Map_size][i] = N_Moved_math;
-		Smap[i][0] = N_Moved_math;
-		Smap[i][Map_size] = N_Moved_math;
+		Smap[0][i] = Wall_math;
+		Smap[12][i] = Wall_math;
+		Smap[i][0] = Wall_math;
+		Smap[i][12] = Wall_math;
+	}
+
+
+	for (i = 1; i < 12; i++)
+	{
+		Smap[1][i] = N_Moved_math;
+		Smap[11][i] = N_Moved_math;
+		Smap[i][1] = N_Moved_math;
+		Smap[i][11] = N_Moved_math;
 	}
 
 	//マップの障害物の配置
@@ -192,3 +216,38 @@ void agent_direction(Agent *a)
 		printf("\n");
 	}
 }
+
+void agent_action_select(Agent *a, int Smap[13][13])
+{
+	while (1)
+	{
+		if (Smap[(*a).location_x][(*a).location_y] != Wall_math)
+		{
+			(*a).agent_action_select = genrand_int32() % 4;
+			break;
+		}
+	}
+	
+}
+
+void agent_action_dc(Agent *a)
+{
+	int i = (*a).agent_action_select;
+
+	switch(i)
+	{
+    case 0:
+    (*a).location_x = (*a).location_x - 1;
+      break;
+    case 1:
+    (*a).location_y = (*a).location_y + 1;
+      break;
+    case 2:
+    (*a).location_y = (*a).location_y - 1;
+      break;
+	case 3:
+    (*a).location_x = (*a).location_x + 1;
+      break;
+  	}
+}
+
