@@ -13,8 +13,9 @@
 #define agent_location 6 //エージェントのいる場所
 
 #define MAP_SIZE 11			 //マップの大きさ
-#define NUM_LEARN 1			 //学習の回数
+#define NUM_GAME 1			 //ゲーム回数
 #define NUM_STEPS 500		 //エージェントの動ける回数
+#define NUM_LEARN 5000		 //学習の回数
 #define NUM_CHANGE 250		 //何ステップでゴールを切り替えるか
 #define NUM_SAMPLE 6561		 // 訓練データのサンプル数。
 #define NUM_INPUT 10		 // 入力ノード数。
@@ -46,11 +47,12 @@ typedef struct
 int tx[NUM_SAMPLE][NUM_INPUT], ty[NUM_SAMPLE][NUM_OUTPUT], next_tx[NUM_SAMPLE][NUM_INPUT];			 // 訓練データを格納する配列。tx = 入力値：ty = 教師信号
 double x[NUM_INPUT + NUM_CON + 1], h[NUM_HIDDEN + 1], c[NUM_CON], y[NUM_OUTPUT];					 // 閾値表現用に１つ余分に確保。
 double next_x[NUM_INPUT + NUM_CON + 1], next_h[NUM_HIDDEN + 1], next_c[NUM_CON], next_y[NUM_OUTPUT]; // 閾値表現用に１つ余分に確保。
-double next_maxq;																//次状態のQ値の最大値を保持する変数
-double w1[NUM_INPUT + NUM_CON + 1][NUM_HIDDEN], w2[NUM_HIDDEN + 1][NUM_OUTPUT]; // 閾値表現用に１つ余分に確保。
-double h_back[NUM_HIDDEN + 1], y_back[NUM_OUTPUT];								// 隠れ素子、出力素子における逆伝搬量。
-int Choice_info;																//ポリシーによって決まった情報を保管する変数
-int totall_rewards[NUM_LEARN];													//１学習分の報酬を格納する
+double next_maxq;																					 //次状態のQ値の最大値を保持する変数
+double w1[NUM_INPUT + NUM_CON + 1][NUM_HIDDEN], w2[NUM_HIDDEN + 1][NUM_OUTPUT];						 // 閾値表現用に１つ余分に確保。
+double h_back[NUM_HIDDEN + 1], y_back[NUM_OUTPUT];													 // 隠れ素子、出力素子における逆伝搬量。
+int Choice_info;																					 //ポリシーによって決まった情報を保管する変数
+int next_info_choice;
+int totall_rewards[NUM_LEARN]; //１学習分の報酬を格納する
 double qt[4][5];
 int Wall_judge;
 
@@ -101,10 +103,9 @@ void NextFeedforward(int);
 void Backward(int, Agent *agent);
 void ModifyWaits(void);
 void Infoselect(int, Agent *agent);
-void choice_NextQMAX(void);
+void choice_NextQMAX(Agent *agent);
 void init_q_values(double qt[4][5]);
 void Act(Agent *agent);
-
 
 int main(int argc, char *argv[])
 {
@@ -112,13 +113,13 @@ int main(int argc, char *argv[])
 	Agent agent;
 	unsigned long int Mtseed;
 	Mtseed = strtoul(argv[1], NULL, 10);
-	int ilearn;
+	int game;
 	int steps;
 	int count;
 	init_genrand(Mtseed);
 	agent.step_count = 0;
 
-	for (ilearn = 0; ilearn < NUM_LEARN; ilearn++)
+	for (game = 0; game < NUM_GAME; game++)
 	{
 
 		//Agentのスタート位置
@@ -170,7 +171,7 @@ int main(int argc, char *argv[])
 
 			NextReadData(&agent, steps);
 			NextFeedforward(steps);
-			choice_NextQMAX();
+			choice_NextQMAX(&agent);
 			Backward(steps, &agent);
 			ModifyWaits();
 		}
@@ -718,11 +719,11 @@ void NextFeedforward(int isample2)
 	{
 		if (i < NUM_INPUT)
 		{
-			next_x[i] = next_tx[isample2][i];
+			x[i] = next_tx[isample2][i];
 		}
 		else
 		{
-			next_x[i] = next_c[i - 1];
+			x[i] = c[i - 1];
 		}
 	}
 
@@ -738,10 +739,10 @@ void NextFeedforward(int isample2)
 			net_input = net_input + w1[i][j] * x[i];
 		}
 
-		next_h[j] = (double)(1.0 / (1.0 + exp((double)net_input * -BETA)));
+		h[j] = (double)(1.0 / (1.0 + exp((double)net_input * -BETA)));
 
 		// 文脈ニューロン素子値[名嘉]
-		next_c[j] = next_h[j];
+		c[j] = h[j];
 	}
 	next_h[NUM_HIDDEN] = (double)1.0;
 
@@ -754,7 +755,7 @@ void NextFeedforward(int isample2)
 		{
 			net_input = net_input + w2[i][j] * h[i];
 		}
-		next_y[j] = (double)(1.0 / (1.0 + exp((double)net_input * -BETA)));
+		y[j] = (double)(1.0 / (1.0 + exp((double)net_input * -BETA)));
 	}
 }
 
@@ -844,17 +845,19 @@ void Infoselect(int isample2, Agent *agent)
 	Choice_info = info_choice;
 }
 
-void choice_NextQMAX(void)
+void choice_NextQMAX(Agent *agent)
 {
 	double i;
 
 	if (next_y[1] < next_y[0])
 	{
 		i = next_y[0];
+		next_info_choice = (*agent).next_sight_g1[0][0];
 	}
 	else
 	{
 		i = next_y[1];
+		next_info_choice = (*agent).next_sight_g2[0][0];
 	}
 	next_maxq = i;
 }
@@ -927,7 +930,50 @@ void Act(Agent *agent)
 	}
 }
 
-void Act_Learn()
+void Act_Learn(Agent *agent, int isample2)
 {
-	
+	int i, j, max_q, n, m;
+	int num_q[4];
+	int same_q[4];
+	int same_q_action[4];
+	int how_many_same_q;
+	double alpha = ALPHA;
+	double gamma = GAMMA;
+	double q = qt[(*agent).agent_action_select][Choice_info - 1];
+
+	i = next_info_choice - 1;
+
+	for (j = 0; j < 4; j++)
+	{
+		num_q[j] = qt[j][i];
+	}
+	max_q = num_q[0];
+	for (j = 1; j < 4; j++)
+	{
+		if (max_q < num_q[j])
+		{
+			max_q = num_q[j];
+		}
+	}
+			how_many_same_q = 0;
+		n = 0;
+
+		for (j = 0; j < 4; j++)
+		{
+			if (max_q == num_q[j])
+			{
+				same_q[j] = 1;
+				how_many_same_q++;
+				same_q_action[n] = j;
+				n++;
+			}
+			else
+			{
+				same_q[j] = 0;
+			}
+		}
+
+		m = same_q_action[genrand_int32() % n];
+
+	qt[(*agent).agent_action_select][Choice_info - 1] = q + (alpha * (*agent).rewards[isample2] + (gamma * num_q[m]) - q);
 }
