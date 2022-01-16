@@ -12,11 +12,11 @@
 #define G_info_math 5	 //ゴール情報
 #define agent_location 6 //エージェントのいる場所
 
-#define MAP_SIZE 7			 //マップの大きさ
-#define NUM_GAME 10		 //ゲーム回数
-#define NUM_STEPS 10		 //エージェントの動ける回数
-#define NUM_LEARN 100		 //学習の回数
-#define NUM_CHANGE 250		 //何ステップでゴールを切り替えるか
+#define MAP_SIZE 5			 //マップの大きさ
+#define NUM_GAME 100			 //ゲーム回数
+#define NUM_STEPS 50		 //エージェントの動ける回数
+#define NUM_LEARN 1000		 //学習の回数
+#define NUM_CHANGE 25		 //何ステップでゴールを切り替えるか
 #define NUM_INPUT 20		 // 入力ノード数。
 #define NUM_HIDDEN 3		 // 中間層（隠れ層）の素子数。
 #define NUM_CON 3			 //文脈ニューロンの素子数[名嘉]
@@ -27,6 +27,8 @@
 #define EPSILON 0.3			 //epsilon greedyに使うepsilon.
 #define THRESHOLD_ERROR 0.01 // 学習誤差がこの値以下になるとプログラムは停止する。
 #define BETA 0.5			 // 非線形性の強さ
+#define NUM_UNPOS_TOP 1		 //教師信号の地域の最大値を表す
+#define NUM_UNPOS_BOTTOM 0	 //教師信号の地域の最小値を表す
 
 typedef struct
 {
@@ -43,7 +45,7 @@ typedef struct
 
 } Agent;
 
-int tx[NUM_STEPS][NUM_INPUT], ty[NUM_STEPS][NUM_OUTPUT], next_tx[NUM_STEPS][NUM_INPUT];			 // 訓練データを格納する配列。tx = 入力値：ty = 教師信号
+int tx[NUM_STEPS][NUM_INPUT], ty[NUM_STEPS][NUM_OUTPUT], next_tx[NUM_STEPS][NUM_INPUT];				 // 訓練データを格納する配列。tx = 入力値：ty = 教師信号
 double x[NUM_INPUT + NUM_CON + 1], h[NUM_HIDDEN + 1], c[NUM_CON], y[NUM_OUTPUT];					 // 閾値表現用に１つ余分に確保。
 double next_x[NUM_INPUT + NUM_CON + 1], next_h[NUM_HIDDEN + 1], next_c[NUM_CON], next_y[NUM_OUTPUT]; // 閾値表現用に１つ余分に確保。
 double next_maxq;																					 //次状態のQ値の最大値を保持する変数
@@ -54,28 +56,25 @@ int next_info_choice;
 int totall_rewards[NUM_LEARN]; //１学習分の報酬を格納する
 double qt[4][5];
 int Wall_judge;
+int goal1_judge; //ゴール１にたどり着いたかどうかの判定に使用する
+int goal2_judge; //ゴール２にたどり着いたかどうかの判定に使用する
 
 int map_g1[MAP_SIZE][MAP_SIZE] = //ゴール１をめざす
 	{
-		{0, 0, 0, 0, 0, 0, 0},
-		{0, 5, 3, 3, 3, 3, 0},
-		{0, 2, 3, 3, 3, 3, 0},
-		{0, 2, 3, 3, 3, 3, 0},
-		{0, 2, 3, 3, 3, 3, 0},
-		{0, 2, 3, 3, 3, 3, 0},
-		{0, 0, 0, 0, 0, 0, 0}};
+		{5, 3, 3, 3, 3},
+		{2, 3, 3, 3, 3},
+		{2, 3, 3, 3, 3},
+		{2, 3, 3, 3, 3},
+		{2, 3, 3, 3, 3}};
 int map_g2[MAP_SIZE][MAP_SIZE] = //ゴール２を目指すマップ
 	{
-		{0, 0, 0, 0, 0, 0, 0},
-		{0, 4, 3, 3, 3, 3, 0},
-		{0, 4, 3, 3, 3, 3, 0},
-		{0, 4, 3, 3, 3, 3, 0},
-		{0, 4, 3, 3, 3, 3, 0},
-		{0, 5, 3, 3, 3, 3, 0},
-		{0, 0, 0, 0, 0, 0, 0}};
+		{4, 3, 3, 3, 3},
+		{4, 3, 3, 3, 3},
+		{4, 3, 3, 3, 3},
+		{4, 3, 3, 3, 3},
+		{5, 3, 3, 3, 3}};
 
 void showmap(int map_g1[MAP_SIZE][MAP_SIZE], Agent *agent); //マップを可視化する関数
-//void make_Smap(int map_g1[MAP_SIZE][MAP_SIZE]);
 void agent_sight_g1(Agent *agent);
 void agent_sight_g2(Agent *agent);
 void next_agent_sight_g1(Agent *agent);
@@ -98,6 +97,7 @@ void Infoselect(int, Agent *agent);
 void choice_NextQMAX(Agent *agent);
 void init_q_values(double qt[4][5]);
 void Act(Agent *agent);
+void Act_Learn(Agent *agent, int);
 
 int main(int argc, char *argv[])
 {
@@ -109,23 +109,26 @@ int main(int argc, char *argv[])
 	int steps;
 	int count;
 	int ilearn;
+	int now_location_x, now_location_y;
 	double error, max_error;
 	init_genrand(Mtseed);
-	agent.step_count = 0;
 
 	for (game = 0; game < NUM_GAME; game++)
 	{
 
 		//Agentのスタート位置
-		agent.location_x = 1;
-		agent.location_y = 1;
+		agent.location_x = 2;
+		agent.location_y = 4;
+		agent.step_count = 0;
+		goal1_judge = 0;
+		goal2_judge = 0;
 
+		//報酬を入れる配列の初期化
 		init_rewards_post(&agent);
 
 		for (steps = 0; steps < NUM_STEPS; steps++)
 		{
 			count = steps;
-			printf("before info :\n");
 			agent_sight_g1(&agent);
 			agent_sight_g2(&agent);
 
@@ -133,36 +136,45 @@ int main(int argc, char *argv[])
 			ReadData(&agent, steps);
 			printf("\n");
 
+			//RNNの重みを初期化
 			InitNet();
 
-			printf("エージェントが保持している報酬:%f\n", agent.rewards[steps]);
-
+			now_location_x = agent.location_x;
+			now_location_y = agent.location_y;
 			for (ilearn = 0; ilearn < NUM_LEARN; ilearn++)
 			{
+
 				max_error = 0;
+				if (ilearn < NUM_LEARN)
+				{
+					agent.location_x = now_location_x;
+					agent.location_y = now_location_y;
+				}
+
 				Feedforward(steps);
 
 				Infoselect(steps, &agent);
-				
 
 				Act(&agent);
 
 				//行動の選択
-				agent_action_select(&agent, map_g1);
+				//agent_action_select(&agent, map_g1);
 
 				//選択した行動を実行
 				agent_action_dc(&agent);
 
 				//１学習の中でどれだけの報酬を獲得したのかを保持する
 				rewards_post(&agent, goal_steps(&agent, map_g1, map_g2), steps);
+
 				next_agent_sight_g1(&agent);
 				next_agent_sight_g2(&agent);
-	
 				NextReadData(&agent, steps);
 				NextFeedforward(steps);
 				choice_NextQMAX(&agent);
+
 				Backward(steps, &agent);
 				ModifyWaits();
+				Act_Learn(&agent, steps);
 
 				error = CalcError(steps);
 				if (error > max_error)
@@ -174,18 +186,22 @@ int main(int argc, char *argv[])
 				{
 					break;
 				}
-				
+				agent.step_count--;
 			}
-
+			printf("%dsteps\n", steps);
 			showmap(map_g1, &agent);
 
-			printf("after info :\n");
 			agent_sight_g1(&agent);
 			agent_sight_g2(&agent);
 
 			printf("エージェントが保持している報酬:%f\n", agent.rewards[steps]);
 
 			printf("\n");
+		}
+		if (goal2_judge == 1)
+		{
+			printf("ゴール２にたどり着いた\n");
+			break;
 		}
 	}
 
@@ -263,31 +279,14 @@ void agent_sight_g1(Agent *agent)
 
 	(*agent).sight_g1[0][0] = 0;
 
-	//(*agent).sight[0][0] = map_g1[(*agent).location_x - 1][(*agent).location_y - 1];
-	//(*agent).sight[0][1] = map_g1[(*agent).location_x - 1][(*agent).location_y];
-	//(*agent).sight[0][2] = map_g1[(*agent).location_x - 1][(*agent).location_y + 1];
-	//(*agent).sight[1][0] = map_g1[(*agent).location_x][(*agent).location_y - 1];
 	(*agent).sight_g1[0][0] = map_g1[(*agent).location_x][(*agent).location_y];
-	//(*agent).sight[1][2] = map_g1[(*agent).location_x][(*agent).location_y + 1];
-	//(*agent).sight[2][0] = map_g1[(*agent).location_x + 1][(*agent).location_y - 1];
-	//(*agent).sight[2][1] = map_g1[(*agent).location_x + 1][(*agent).location_y];
-	//(*agent).sight[2][2] = map_g1[(*agent).location_x + 1][(*agent).location_y + 1];
 }
 
 void agent_sight_g2(Agent *agent)
 {
 
 	(*agent).sight_g2[0][0] = 0;
-
-	//(*agent).sight_g2[0][0] = map_g2[(*agent).location_x - 1][(*agent).location_y - 1];
-	//(*agent).sight_g2[0][1] = map_g2[(*agent).location_x - 1][(*agent).location_y];
-	//(*agent).sight_g2[0][2] = map_g2[(*agent).location_x - 1][(*agent).location_y + 1];
-	//(*agent).sight_g2[1][0] = map_g2[(*agent).location_x][(*agent).location_y - 1];
 	(*agent).sight_g2[0][0] = map_g2[(*agent).location_x][(*agent).location_y];
-	//(*agent).sight_g2[1][2] = map_g2[(*agent).location_x][(*agent).location_y + 1];
-	//(*agent).sight_g2[2][0] = map_g2[(*agent).location_x + 1][(*agent).location_y - 1];
-	//(*agent).sight_g2[2][1] = map_g2[(*agent).location_x + 1][(*agent).location_y];
-	//(*agent).sight_g2[2][2] = map_g2[(*agent).location_x + 1][(*agent).location_y + 1];
 }
 
 void next_agent_sight_g1(Agent *agent)
@@ -295,15 +294,7 @@ void next_agent_sight_g1(Agent *agent)
 
 	(*agent).next_sight_g1[0][0] = 0;
 
-	//(*agent).sight[0][0] = map_g1[(*agent).location_x - 1][(*agent).location_y - 1];
-	//(*agent).sight[0][1] = map_g1[(*agent).location_x - 1][(*agent).location_y];
-	//(*agent).sight[0][2] = map_g1[(*agent).location_x - 1][(*agent).location_y + 1];
-	//(*agent).sight[1][0] = map_g1[(*agent).location_x][(*agent).location_y - 1];
 	(*agent).next_sight_g1[0][0] = map_g1[(*agent).location_x][(*agent).location_y];
-	//(*agent).sight[1][2] = map_g1[(*agent).location_x][(*agent).location_y + 1];
-	//(*agent).sight[2][0] = map_g1[(*agent).location_x + 1][(*agent).location_y - 1];
-	//(*agent).sight[2][1] = map_g1[(*agent).location_x + 1][(*agent).location_y];
-	//(*agent).sight[2][2] = map_g1[(*agent).location_x + 1][(*agent).location_y + 1];
 }
 
 void next_agent_sight_g2(Agent *agent)
@@ -311,17 +302,9 @@ void next_agent_sight_g2(Agent *agent)
 
 	(*agent).next_sight_g2[0][0] = 0;
 
-	//(*agent).sight[0][0] = map_g1[(*agent).location_x - 1][(*agent).location_y - 1];
-	//(*agent).sight[0][1] = map_g1[(*agent).location_x - 1][(*agent).location_y];
-	//(*agent).sight[0][2] = map_g1[(*agent).location_x - 1][(*agent).location_y + 1];
-	//(*agent).sight[1][0] = map_g1[(*agent).location_x][(*agent).location_y - 1];
 	(*agent).next_sight_g2[0][0] = map_g2[(*agent).location_x][(*agent).location_y];
-	//(*agent).sight[1][2] = map_g1[(*agent).location_x][(*agent).location_y + 1];
-	//(*agent).sight[2][0] = map_g1[(*agent).location_x + 1][(*agent).location_y - 1];
-	//(*agent).sight[2][1] = map_g1[(*agent).location_x + 1][(*agent).location_y];
-	//(*agent).sight[2][2] = map_g1[(*agent).location_x + 1][(*agent).location_y + 1];
 }
-
+/*
 void agent_action_select(Agent *agent, int map_g1[MAP_SIZE][MAP_SIZE]) //移動後のますが"W_info_math"かを判定し、もしそうだった場合再度乱数を回す。
 {
 	Wall_judge = 0;
@@ -336,7 +319,8 @@ void agent_action_select(Agent *agent, int map_g1[MAP_SIZE][MAP_SIZE]) //移動�
 		}
 		else
 		{
-			Wall_judge++;
+			Wall_judge = 1;
+			break;
 		}
 	case 1:
 		if (map_g1[(*agent).location_x][(*agent).location_y + 1] != W_info_math)
@@ -345,7 +329,8 @@ void agent_action_select(Agent *agent, int map_g1[MAP_SIZE][MAP_SIZE]) //移動�
 		}
 		else
 		{
-			Wall_judge++;
+			Wall_judge = 1;
+			break;
 		}
 	case 2:
 		if (map_g1[(*agent).location_x][(*agent).location_y - 1] != W_info_math)
@@ -354,7 +339,8 @@ void agent_action_select(Agent *agent, int map_g1[MAP_SIZE][MAP_SIZE]) //移動�
 		}
 		else
 		{
-			Wall_judge++;
+			Wall_judge = 1;
+			break;
 		}
 	case 3:
 		if (map_g1[(*agent).location_x + 1][(*agent).location_y] != W_info_math)
@@ -363,17 +349,19 @@ void agent_action_select(Agent *agent, int map_g1[MAP_SIZE][MAP_SIZE]) //移動�
 		}
 		else
 		{
-			Wall_judge++;
+			Wall_judge = 1;
+			break;
 		}
 	}
 }
-
+*/
 void agent_action_dc(Agent *agent)
 {
 	int i = (*agent).agent_action_select;
 
 	if (Wall_judge == 1)
 	{
+		printf("error\n");
 		return;
 	}
 	else
@@ -382,15 +370,31 @@ void agent_action_dc(Agent *agent)
 		{
 		case 0:
 			(*agent).location_x = (*agent).location_x - 1;
+			if ((*agent).location_x < 0)
+			{
+				(*agent).location_x = 4;
+			}
 			break;
 		case 1:
 			(*agent).location_y = (*agent).location_y + 1;
+			if ((*agent).location_y < 4)
+			{
+				(*agent).location_y = 0;
+			}
 			break;
 		case 2:
 			(*agent).location_y = (*agent).location_y - 1;
+			if ((*agent).location_y < 0)
+			{
+				(*agent).location_y = 4;
+			}
 			break;
 		case 3:
 			(*agent).location_x = (*agent).location_x + 1;
+			if ((*agent).location_x > 4)
+			{
+				(*agent).location_x = 0;
+			}
 			break;
 		}
 	}
@@ -412,19 +416,36 @@ double goal_steps(Agent *agent, int map_g1[MAP_SIZE][MAP_SIZE], int map_g2[MAP_S
 	double b = 0.0;
 	if ((*agent).step_count < NUM_CHANGE)
 	{
-		if (map_g1[(*agent).location_x][(*agent).location_y] == G_info_math)
+		if (goal1_judge != 1)
 		{
-			return a;
+			if (map_g1[(*agent).location_x][(*agent).location_y] == G_info_math)
+			{
+				goal1_judge = 1;
+				return a;
+			}
+			else
+			{
+				return b;
+			}
 		}
 		else
 		{
-			return b;
+			if (map_g2[(*agent).location_x][(*agent).location_y] == G_info_math)
+			{
+				goal2_judge = 1;
+				return a;
+			}
+			else
+			{
+				return b;
+			}
 		}
 	}
 	else
 	{
 		if (map_g2[(*agent).location_x][(*agent).location_y] == G_info_math)
 		{
+			goal2_judge = 1;
 			return a;
 		}
 		else
@@ -572,6 +593,14 @@ void Backward(int isample2, Agent *agent)
 	for (n = 0; n < NUM_OUTPUT; n++)
 	{
 		ty[isample2][n] = y[n] + (alpha * ((*agent).rewards[isample2] + gamma * next_maxq - y[n]));
+		if (NUM_UNPOS_TOP < ty[isample2][n]) //教師信号が規定の値域よりも大きかった場合最大規定の値に合わせる
+		{
+			ty[isample2][n] = 1;
+		}
+		if (ty[isample2][n] < NUM_UNPOS_BOTTOM) //教師信号が規定の値域よりも小さかった場合最小規定の値に合わせる
+		{
+			ty[isample2][n] = 0;
+		}
 	}
 
 	// 逆方向の動作。
@@ -635,8 +664,10 @@ void Infoselect(int isample2, Agent *agent)
 {
 	double epsilon = EPSILON_2;
 	int info_choice = 0;
+	int Choice_info = 0;
 	int i = 0;
-	//double a = 0.01;
+	int j = (*agent).step_count;
+	double a = 0.01;
 
 	if (genrand_real1() < epsilon)
 	{
@@ -655,23 +686,20 @@ void Infoselect(int isample2, Agent *agent)
 		if (y[1] < y[0])
 		{
 			info_choice = (*agent).sight_g1[0][0];
-			/*
+
 			if ((*agent).step_count < NUM_CHANGE)
 			{
-				rewards_post(&agent, a, isample2);
+				rewards_post(&agent, a, j);
 			}
-			*/
-			
 		}
 		else
 		{
 			info_choice = (*agent).sight_g2[0][0];
-			/*
+
 			if ((*agent).step_count > NUM_CHANGE)
 			{
-				rewards_post(&agent, a, isample2);
+				rewards_post(&agent, a, j);
 			}
-			*/
 		}
 	}
 	Choice_info = info_choice;
@@ -710,7 +738,7 @@ void init_q_values(double qt[4][5])
 
 void Act(Agent *agent)
 {
-	int i, j, max_q, n;
+	int i, j, max_q, n, m;
 	int num_q[4];
 	int same_q[4];
 	int same_q_action[4];
@@ -737,7 +765,7 @@ void Act(Agent *agent)
 			if (max_q < num_q[j])
 			{
 				max_q = num_q[j];
-				n = j;
+				m = j;
 			}
 		}
 		how_many_same_q = 0;
@@ -757,8 +785,14 @@ void Act(Agent *agent)
 				same_q[j] = 0;
 			}
 		}
-
-		(*agent).agent_action_select = same_q_action[genrand_int32() % n];
+		if (n != 0)
+		{
+			(*agent).agent_action_select = same_q_action[genrand_int32() % n];
+		}
+		else
+		{
+			(*agent).agent_action_select = m;
+		}
 	}
 }
 
@@ -809,7 +843,6 @@ void Act_Learn(Agent *agent, int isample2)
 
 	qt[(*agent).agent_action_select][Choice_info - 1] = q + (alpha * (*agent).rewards[isample2] + (gamma * num_q[m]) - q);
 }
-
 
 void ReadData(Agent *agent, int isample2)
 {
@@ -5637,7 +5670,6 @@ void ReadData(Agent *agent, int isample2)
 		}
 	}
 }
-
 
 void NextReadData(Agent *agent, int isample2)
 {
