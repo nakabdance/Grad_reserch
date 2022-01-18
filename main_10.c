@@ -21,8 +21,8 @@
 #define NUM_HIDDEN 3		 // 中間層（隠れ層）の素子数。
 #define NUM_CON 3			 //文脈ニューロンの素子数[名嘉]
 #define NUM_OUTPUT 2		 // 出力素子数。
-#define ALPHA 0.2			 //学習率
-#define GAMMA 0.8			 //割引率
+#define ALPHA 0.6			 //学習率
+#define GAMMA 0.4			 //割引率
 #define EPSILON_2 0.05		 // 学習時の重み修正の程度を決める。
 #define EPSILON 0.01			 //epsilon greedyに使うepsilon.
 #define THRESHOLD_ERROR 0.01 // 学習誤差がこの値以下になるとプログラムは停止する。
@@ -60,6 +60,7 @@ int goal1_judge = 0; //ゴール１にたどり着いたかどうかの判定に
 int goal2_judge = 0; //ゴール２にたどり着いたかどうかの判定に使用する
 int clear_count = 0;
 int full_clear_count = 0;
+int average_steps = 0;
 
 int map_g1[MAP_SIZE][MAP_SIZE] = //ゴール１をめざす
 	{
@@ -215,7 +216,7 @@ int main(int argc, char *argv[])
 			//printf("エージェントが保持している報酬:%f\n", rewards[steps]);
 
 
-
+/*
 			if (goal2_judge == 1)
 			{
 				printf("step: %d\n", (steps+1));
@@ -226,11 +227,13 @@ int main(int argc, char *argv[])
 				printf("学べばか");
 				printf("step: %d\n", steps+1);
 			}
-
+			*/
 		}
+		average_steps += steps + 1;
 	}
 	printf("full_clear: %d\n", full_clear_count);
 	printf("clear     : %d\n", clear_count);
+	printf("average   : %f\n", (double)average_steps/(double)NUM_GAME);
 	return (0);
 }
 
@@ -837,7 +840,7 @@ void goal_judge(Agent *agent, int isteps)
 		{
 			if (map_g2[(*agent).location_x][(*agent).location_y] == G_info_math)
 			{
-			printf("CLEARE");
+			//printf("CLEARE");
 				goal2_judge = 1;
 				full_clear_count++;
 			}
